@@ -2,8 +2,8 @@
 set -e
 echo "Running post_install" > "$PREFIX/menuinst_debug.log"
 
-BASE_REQUIREMENTS="$PREFIX/PROJECT_NAME/requirements.txt"
-GPU_REQUIREMENTS="$PREFIX/PROJECT_NAME/requirements_gpu.txt"
+BASE_REQUIREMENTS="$PREFIX/CellTracksColab/requirements.txt"
+GPU_REQUIREMENTS="$PREFIX/CellTracksColab/requirements_gpu.txt"
 SELECTED_REQUIREMENTS="$BASE_REQUIREMENTS"
 
 if [ -f "$GPU_REQUIREMENTS" ]; then
@@ -25,34 +25,34 @@ fi
 if [[ "$OSTYPE" == "darwin"* ]]; then
     echo "Detected macOS platform" >> "$PREFIX/menuinst_debug.log"
         
-    if [ -f "$PREFIX/PROJECT_NAME/requirements-macos.txt" ]; then
-        "$PREFIX/bin/python" -m pip install -r "$PREFIX/PROJECT_NAME/requirements-macos.txt" >> "$PREFIX/menuinst_debug.log"
+    if [ -f "$PREFIX/CellTracksColab/requirements-macos.txt" ]; then
+        "$PREFIX/bin/python" -m pip install -r "$PREFIX/CellTracksColab/requirements-macos.txt" >> "$PREFIX/menuinst_debug.log"
     fi
 
 elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
     echo "Detected Linux platform" >> "$PREFIX/menuinst_debug.log"
 
-    if [ -f "$PREFIX/PROJECT_NAME/requirements-linux.txt" ]; then
-        "$PREFIX/bin/python" -m pip install -r "$PREFIX/PROJECT_NAME/requirements-linux.txt" >> "$PREFIX/menuinst_debug.log"
+    if [ -f "$PREFIX/CellTracksColab/requirements-linux.txt" ]; then
+        "$PREFIX/bin/python" -m pip install -r "$PREFIX/CellTracksColab/requirements-linux.txt" >> "$PREFIX/menuinst_debug.log"
     fi
 
 else
     echo "Unknown platform: $OSTYPE" >> "$PREFIX/menuinst_debug.log"
 fi
 
-PROJECT_ROOT="$PREFIX/PROJECT_NAME"
+PROJECT_ROOT="$PREFIX/CellTracksColab"
 if [ -f "$PROJECT_ROOT/setup.py" ]; then
-    echo "Found setup.py, installing PROJECT_NAME package locally" >> "$PREFIX/menuinst_debug.log" 
+    echo "Found setup.py, installing CellTracksColab package locally" >> "$PREFIX/menuinst_debug.log" 
     "$PREFIX/bin/python" -m pip install "$PROJECT_ROOT" >> "$PREFIX/menuinst_debug.log"
 else
     echo "No setup.py detected, skipping local pip install" >> "$PREFIX/menuinst_debug.log"
 fi
-"$PREFIX/bin/python" "$PREFIX/PROJECT_NAME/include_path.py" --path "$PREFIX" --files "$PREFIX/PROJECT_NAME/notebook_launcher.json" --keyword "BASE_PATH_KEYWORD" >> "$PREFIX/menuinst_debug.log"
-"$PREFIX/bin/python" "$PREFIX/PROJECT_NAME/include_path.py" --path "$PREFIX" --files "$PREFIX/pre_uninstall.sh" --keyword "BASE_PATH" >> "$PREFIX/menuinst_debug.log"
-"$PREFIX/bin/python" "$PREFIX/PROJECT_NAME/include_path.py" --path "$PREFIX" --files "$PREFIX/uninstall.sh" --keyword "BASE_PATH" >> "$PREFIX/menuinst_debug.log"
-"$PREFIX/bin/python" "$PREFIX/PROJECT_NAME/hide_code_cells.py" "$PREFIX/PROJECT_NAME" >> "$PREFIX/menuinst_debug.log"
+"$PREFIX/bin/python" "$PREFIX/CellTracksColab/include_path.py" --path "$PREFIX" --files "$PREFIX/CellTracksColab/notebook_launcher.json" --keyword "BASE_PATH_KEYWORD" >> "$PREFIX/menuinst_debug.log"
+"$PREFIX/bin/python" "$PREFIX/CellTracksColab/include_path.py" --path "$PREFIX" --files "$PREFIX/pre_uninstall.sh" --keyword "BASE_PATH" >> "$PREFIX/menuinst_debug.log"
+"$PREFIX/bin/python" "$PREFIX/CellTracksColab/include_path.py" --path "$PREFIX" --files "$PREFIX/uninstall.sh" --keyword "BASE_PATH" >> "$PREFIX/menuinst_debug.log"
+"$PREFIX/bin/python" "$PREFIX/CellTracksColab/hide_code_cells.py" "$PREFIX/CellTracksColab" >> "$PREFIX/menuinst_debug.log"
 "$PREFIX/bin/python" -c "import os, sys; print('Python:', sys.executable); print('Prefix:', os.environ.get('PREFIX'))" >> "$PREFIX/menuinst_debug.log"
-"$PREFIX/bin/python" -c "from menuinst.api import install; import os; print(install(os.path.join('$PREFIX', 'PROJECT_NAME', 'notebook_launcher.json')))" >> "$PREFIX/menuinst_debug.log" 2>&1
+"$PREFIX/bin/python" -c "from menuinst.api import install; import os; print(install(os.path.join('$PREFIX', 'CellTracksColab', 'notebook_launcher.json')))" >> "$PREFIX/menuinst_debug.log" 2>&1
 
 if [ -t 0 ]; then
     echo
