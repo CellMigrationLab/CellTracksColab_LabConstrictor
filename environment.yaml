@@ -8,5 +8,5 @@ dependencies:
 - conda
 - git
 - pip
-- jupyterlab=4.4.10
-- "ipykernel<7"
+- jupyterlab=4.4.0
+- ipykernel<7
