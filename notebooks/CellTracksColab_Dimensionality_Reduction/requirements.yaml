@@ -13,6 +13,8 @@ dependencies:
 - scikit-learn==1.6.1
 - scikit-image==0.25.2
 - lxml==6.1.1
+- umap-learn==0.5.12
+- hdbscan==0.8.44
 description: This notebook 'CellTracksColab_Dimensionality_Reduction.ipynb' is for
   ...
 linux_dependencies: []
