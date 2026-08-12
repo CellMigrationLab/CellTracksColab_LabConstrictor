@@ -188,7 +188,7 @@ def calculate_track_metrics_rolling(group, window_size=5):
         'Mean Speed Rolling': rolling_metrics['rolling_mean'],
         'Median Speed Rolling': rolling_metrics['rolling_median'],
         'Max Speed Rolling': rolling_metrics['rolling_max'],
-        'Min Speed Rolling Rolling': rolling_metrics['rolling_min'],
+        'Min Speed Rolling': rolling_metrics['rolling_min'],
         'Speed Standard Deviation Rolling': rolling_metrics['rolling_std'],
         'Total Distance Traveled Rolling': average_rolling_distance
     })

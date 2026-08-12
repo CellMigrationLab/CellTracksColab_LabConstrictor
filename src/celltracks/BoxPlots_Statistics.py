@@ -13,11 +13,10 @@ from matplotlib.colors import LogNorm
 import matplotlib.pyplot as plt
 import seaborn as sns
 import itertools
+import warnings
 from matplotlib.gridspec import GridSpec
 import requests
-from scipy.stats import zscore
 from scipy.stats import ks_2samp
-from sklearn.preprocessing import MinMaxScaler
 
 
 computed_metrics = {
@@ -26,7 +25,8 @@ computed_metrics = {
         'Speed Standard Deviation', 'Directionality', 'Total Distance Traveled', 'Spatial Coverage', 'Tortuosity', 'Total Turning Angle', 'FMI_x_plus','FMI_x_minus', 'FMI_y_plus','FMI_y_minus'],
     'Rolling Track Metrics': [
         'Mean Speed Rolling', 'Median Speed Rolling', 'Max Speed Rolling',
-        'Min Speed Rolling', 'Speed Standard Deviation Rolling',
+        'Min Speed Rolling', 'Min Speed Rolling Rolling',
+        'Speed Standard Deviation Rolling',
         'Total Distance Traveled Rolling', 'Directionality Rolling', 'Tortuosity Rolling', 'Total Turning Angle Rolling', 'Spatial Coverage Rolling'
     ],
     'Morphological Metrics': [
@@ -151,135 +151,223 @@ def display_condition_selection(df, column_name):
     condition_accordion.set_title(0, 'Select Conditions')
     return condition_selector, condition_accordion
 
+
 def format_scientific_for_ticks(x):
-    """Format p-values for ticks: use scientific notation for values below 0.001, otherwise use standard notation."""
+    """Format finite p-values for color-bar ticks."""
+    if not np.isfinite(x):
+        return "N/A"
     if x < 0.001:
         return f"{x:.1e}"
-    else:
-        return f"{x:.4f}"
+    return f"{x:.4f}"
+
 
 def format_p_value(x):
-    """Format p-values to four significant digits."""
+    """Format a finite p-value for a heatmap annotation."""
+    if not np.isfinite(x):
+        return "N/A"
     if x < 0.001:
         return "< 0.001"
-    else:
-        return f"{x:.4g}"  # .4g ensures four significant digits
+    return f"{x:.4g}"
 
 
 def safe_log10_p_values(matrix):
-    """Apply a safe logarithmic transformation to p-values, handling p=1 specifically."""
-    # Replace non-positive values with a very small number just greater than 0
-    small_value = np.nextafter(0, 1)
-    adjusted_matrix = np.where(matrix > 0, matrix, small_value)
+    """Return -log10(p), retaining a finite plotting range for p-values."""
+    values = np.asarray(matrix, dtype=float)
+    smallest_positive = np.nextafter(0.0, 1.0)
+    values = np.clip(values, smallest_positive, 1.0)
+    return -np.log10(values)
 
-    logged_matrix = -np.log10(adjusted_matrix)
-    logged_matrix[matrix == 1] = -np.log10(0.999)
-    return logged_matrix
 
 def plot_heatmap(ax, matrix, title, cmap='viridis'):
-    """Plot a heatmap with logarithmic scaling of p-values and real p-values as annotations."""
-    log_matrix = safe_log10_p_values(matrix.fillna(1))
+    """Plot p-values as -log10(p), with the original p-values annotated."""
+    numeric_matrix = matrix.astype(float)
+    missing_mask = ~np.isfinite(numeric_matrix.to_numpy())
+    plot_matrix = numeric_matrix.fillna(1.0)
+    log_matrix = safe_log10_p_values(plot_matrix)
 
-    # Define the normalization range
-    vmin = -np.log10(0.1)  # Set vmin to the log-transformed value of 0.1
-    vmax = np.max(log_matrix[np.isfinite(log_matrix)])
+    finite_values = log_matrix[np.isfinite(log_matrix)]
+    vmax = max(1.0, float(finite_values.max())) if finite_values.size else 1.0
+    vmin = 0.0
 
-    if vmin > vmax:
-      vmin = vmax        
+    formatted_annotations = numeric_matrix.map(
+        lambda value: format_p_value(value) if np.isfinite(value) else ""
+    )
 
-    # Format annotations
-    formatted_annotations = matrix.applymap(lambda x: format_p_value(x) if pd.notna(x) else "NaN")
-
-    # Plot the heatmap without the color bar
-    heatmap = sns.heatmap(log_matrix, ax=ax, cmap=cmap, annot=formatted_annotations,
-                          fmt="", xticklabels=matrix.columns, yticklabels=matrix.index, cbar=False, vmin=vmin, vmax=vmax)
+    sns.heatmap(
+        log_matrix,
+        ax=ax,
+        cmap=cmap,
+        annot=formatted_annotations,
+        fmt="",
+        xticklabels=numeric_matrix.columns,
+        yticklabels=numeric_matrix.index,
+        cbar=False,
+        vmin=vmin,
+        vmax=vmax,
+        square=True,
+    )
     ax.set_title(title)
-    ax.set_xticklabels(ax.get_xticklabels(), rotation=90)
+    ax.tick_params(axis='x', labelrotation=90)
+    ax.tick_params(axis='y', labelrotation=0)
 
-    # Create a color bar with conditional formatting for ticks
+    # Mark undefined comparisons explicitly instead of coloring them as p=1.
+    for row, col in zip(*np.where(missing_mask)):
+        ax.add_patch(
+            plt.Rectangle(
+                (col, row), 1, 1,
+                facecolor='lightgrey',
+                edgecolor='white',
+                linewidth=0.5,
+                zorder=2,
+            )
+        )
+        ax.text(col + 0.5, row + 0.5, "N/A", ha='center', va='center', zorder=3)
+
     norm = plt.Normalize(vmin=vmin, vmax=vmax)
     sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
     sm.set_array([])
     cbar = ax.figure.colorbar(sm, ax=ax)
 
-    # Set custom ticks and labels for the color bar
-    num_ticks = 5
-    tick_locs = np.linspace(vmin, vmax, num_ticks)
-    tick_labels = [format_scientific_for_ticks(10**-tick) for tick in tick_locs]
+    tick_locs = np.linspace(vmin, vmax, 5)
+    tick_labels = [format_scientific_for_ticks(10 ** -tick) for tick in tick_locs]
     cbar.set_ticks(tick_locs)
     cbar.set_ticklabels(tick_labels)
 
-def cohen_d(group1, group2):
-    """Calculate Cohen's d for measuring effect size between two groups."""
-    diff = group1.mean() - group2.mean()
+
+def _finite_numeric_array(values):
+    """Convert array-like values to a one-dimensional finite float array."""
+    numeric = pd.to_numeric(pd.Series(values), errors='coerce').to_numpy(dtype=float)
+    return numeric[np.isfinite(numeric)]
+
+
+def _cohen_d_from_finite_arrays(group1, group2):
+    """Calculate Cohen's d from arrays that have already been cleaned."""
     n1, n2 = len(group1), len(group2)
-    var1 = group1.var(ddof=1)  # ddof=1 for sample variance
+    if n1 < 2 or n2 < 2:
+        return np.nan
+
+    diff = group1.mean() - group2.mean()
+    var1 = group1.var(ddof=1)
     var2 = group2.var(ddof=1)
     pooled_var = ((n1 - 1) * var1 + (n2 - 1) * var2) / (n1 + n2 - 2)
-    d = diff / np.sqrt(pooled_var)
-    return d
+
+    if not np.isfinite(pooled_var) or pooled_var < 0:
+        return np.nan
+    if np.isclose(pooled_var, 0.0):
+        return 0.0 if np.isclose(diff, 0.0) else np.nan
+
+    return diff / np.sqrt(pooled_var)
+
+
+def cohen_d(group1, group2):
+    """Calculate Cohen's d after removing NaN and infinite observations."""
+    return _cohen_d_from_finite_arrays(
+        _finite_numeric_array(group1),
+        _finite_numeric_array(group2),
+    )
+
 
 def perform_randomization_test(df, cond1, cond2, var, n_iterations=1000):
     """Perform a randomization test using Cohen's d as the effect size metric."""
-    group1 = df[df['Condition'] == cond1][var]
-    group2 = df[df['Condition'] == cond2][var]
-    observed_effect_size = cohen_d(group1, group2)
+    group1 = _finite_numeric_array(df.loc[df['Condition'] == cond1, var])
+    group2 = _finite_numeric_array(df.loc[df['Condition'] == cond2, var])
+    observed_effect_size = _cohen_d_from_finite_arrays(group1, group2)
+
+    if not np.isfinite(observed_effect_size):
+        return np.nan
+
     combined = np.concatenate([group1, group2])
+    rng = np.random.default_rng()
     count_extreme = 0
-    # Perform the randomization test
+
     for _ in range(n_iterations):
-        np.random.shuffle(combined)
-        new_group1 = combined[:len(group1)]
-        new_group2 = combined[len(group1):]
-        new_effect_size = cohen_d(new_group1, new_group2)
-        if abs(new_effect_size) >= abs(observed_effect_size):
+        permuted = rng.permutation(combined)
+        new_group1 = permuted[:len(group1)]
+        new_group2 = permuted[len(group1):]
+        new_effect_size = _cohen_d_from_finite_arrays(new_group1, new_group2)
+        if np.isfinite(new_effect_size) and abs(new_effect_size) >= abs(observed_effect_size):
             count_extreme += 1
 
-    p_value = (count_extreme + 1) / (n_iterations + 1)
-    return p_value
+    return (count_extreme + 1) / (n_iterations + 1)
+
 
 def run_batch(params):
-    """Function to run a batch of randomization tests."""
-    group1, group2, combined, observed_effect_size, n_iter = params
+    """Run one batch of randomization-test permutations."""
+    group1_size, combined, observed_effect_size, n_iter = params
+    rng = np.random.default_rng()
     count_extreme = 0
+
     for _ in range(n_iter):
-        np.random.shuffle(combined)
-        new_group1 = combined[:len(group1)]
-        new_group2 = combined[len(group1):]
-        new_effect_size = cohen_d(new_group1, new_group2)
-        if abs(new_effect_size) >= abs(observed_effect_size):
+        permuted = rng.permutation(combined)
+        new_group1 = permuted[:group1_size]
+        new_group2 = permuted[group1_size:]
+        new_effect_size = _cohen_d_from_finite_arrays(new_group1, new_group2)
+        if np.isfinite(new_effect_size) and abs(new_effect_size) >= abs(observed_effect_size):
             count_extreme += 1
+
     return count_extreme
 
+
 def perform_randomization_test_parallel(df, cond1, cond2, var, n_iterations=1000, n_cores=4):
-    group1 = df[df['Condition'] == cond1][var].to_numpy()
-    group2 = df[df['Condition'] == cond2][var].to_numpy()
-    observed_effect_size = cohen_d(group1, group2)
+    """Perform a NaN-safe randomization test, optionally across worker processes."""
+    group1 = _finite_numeric_array(df.loc[df['Condition'] == cond1, var])
+    group2 = _finite_numeric_array(df.loc[df['Condition'] == cond2, var])
+    observed_effect_size = _cohen_d_from_finite_arrays(group1, group2)
+
+    if not np.isfinite(observed_effect_size):
+        return np.nan
+
+    n_iterations = int(n_iterations)
+    if n_iterations < 1:
+        raise ValueError("n_iterations must be at least 1")
+
     combined = np.concatenate([group1, group2])
+    n_cores = max(1, min(int(n_cores), n_iterations))
 
-    # Split iterations across multiple cores
-    iter_per_core = [(group1, group2, combined.copy(), observed_effect_size, n_iterations // n_cores) for _ in range(n_cores)]
+    if n_cores == 1:
+        return perform_randomization_test(df, cond1, cond2, var, n_iterations=n_iterations)
+
+    iterations = [n_iterations // n_cores] * n_cores
     for i in range(n_iterations % n_cores):
-        iter_per_core[i] = (group1, group2, combined.copy(), observed_effect_size, iter_per_core[i][-1] + 1)
+        iterations[i] += 1
 
-    # Create a multiprocessing pool with the 'spawn' start method to avoid threading issues
-    with get_context("spawn").Pool(n_cores) as pool:
-        results = pool.map(run_batch, iter_per_core)
+    batches = [
+        (len(group1), combined.copy(), observed_effect_size, batch_iterations)
+        for batch_iterations in iterations
+        if batch_iterations > 0
+    ]
+
+    with get_context("spawn").Pool(len(batches)) as pool:
+        results = pool.map(run_batch, batches)
 
     total_extreme = sum(results)
-    p_value = (total_extreme + 1) / (n_iterations + 1)
-    return p_value
+    return (total_extreme + 1) / (n_iterations + 1)
+
 
 def perform_t_test(df, cond1, cond2, var):
-    """Perform a t-test using the average of each repeat for the given conditions and calculate Cohen's d."""
-    group1 = df[df['Condition'] == cond1].groupby('Repeat')[var].mean()
-    group2 = df[df['Condition'] == cond2].groupby('Repeat')[var].mean()
+    """Perform Welch's t-test on repeat-level means after removing non-finite values."""
+    group1 = (
+        df.loc[df['Condition'] == cond1]
+        .groupby('Repeat')[var]
+        .mean()
+        .replace([np.inf, -np.inf], np.nan)
+        .dropna()
+        .to_numpy(dtype=float)
+    )
+    group2 = (
+        df.loc[df['Condition'] == cond2]
+        .groupby('Repeat')[var]
+        .mean()
+        .replace([np.inf, -np.inf], np.nan)
+        .dropna()
+        .to_numpy(dtype=float)
+    )
 
-    # Perform the t-test on these group means
-    t_stat, p_value = stats.ttest_ind(group1, group2, equal_var=False)  # Use Welch's t-test for unequal variances
+    if len(group1) < 2 or len(group2) < 2:
+        return np.nan
 
-    return p_value
-
+    _, p_value = stats.ttest_ind(group1, group2, equal_var=False, nan_policy='omit')
+    return float(p_value) if np.isfinite(p_value) else np.nan
 
 def calculate_ks_p_value(df1, df2, column):
     """
@@ -295,147 +383,217 @@ def calculate_ks_p_value(df1, df2, column):
     """
     return ks_2samp(df1[column].dropna(), df2[column].dropna())[1]
 
+
 def plot_selected_vars(button, checkboxes_dict, df, Conditions, Results_Folder, condition_selector, stat_method_selector):
-    plt.clf()  # Clear the current figure before creating a new plot
+    plt.close('all')
     print("Plotting in progress...")
 
-    # Get selected variables
     variables_to_plot = []
     for category, checkboxes in checkboxes_dict.items():
         if isinstance(checkboxes, dict):
-            for subcategory, subcheckboxes in checkboxes.items():
-                for checkbox in subcheckboxes:
-                    if checkbox.value:
-                        variables_to_plot.append(checkbox.description)
+            for subcheckboxes in checkboxes.values():
+                variables_to_plot.extend(
+                    checkbox.description for checkbox in subcheckboxes if checkbox.value
+                )
         else:
-            for checkbox in checkboxes:
-                if checkbox.value:
-                    variables_to_plot.append(checkbox.description)
-                    
-    n_plots = len(variables_to_plot)
-    method = stat_method_selector.value
+            variables_to_plot.extend(
+                checkbox.description for checkbox in checkboxes if checkbox.value
+            )
 
-    if n_plots == 0:
+    method = stat_method_selector.value
+    if not variables_to_plot:
         print("No variables selected for plotting")
         return
-    
-    # Get selected conditions
-    selected_conditions = condition_selector.value
-    n_selected_conditions = len(selected_conditions)
-    if n_selected_conditions == 0:
-        print("No conditions selected for plotting, therefore all available conditions are selected by default")        
-        selected_conditions = df[Conditions].unique().tolist()
-    
-    n_selected_conditions = len(selected_conditions)
 
-    effect_size_matrices = {}
-    p_value_matrices = {}
-    bonferroni_matrices = {}
+    selected_conditions = list(condition_selector.value)
+    if not selected_conditions:
+        print("No conditions selected; using all available conditions.")
+        selected_conditions = df[Conditions].dropna().unique().tolist()
 
-    # Use only selected and ordered conditions
     filtered_df = df[df[Conditions].isin(selected_conditions)].copy()
+    unique_conditions = [
+        condition for condition in selected_conditions
+        if condition in set(filtered_df[Conditions].dropna())
+    ]
 
-    unique_conditions = filtered_df[Conditions].unique().tolist()
+    if not unique_conditions:
+        print("No rows are available for the selected conditions.")
+        return
+
     num_comparisons = len(unique_conditions) * (len(unique_conditions) - 1) // 2
     n_iterations = 1000
 
     for var in variables_to_plot:
-        effect_size_matrices[var] = pd.DataFrame(0, index=unique_conditions, columns=unique_conditions)
-        p_value_matrices[var] = pd.DataFrame(1, index=unique_conditions, columns=unique_conditions)
-        bonferroni_matrices[var] = pd.DataFrame(1, index=unique_conditions, columns=unique_conditions)
+        if var not in filtered_df.columns:
+            print(f"Skipping '{var}': column not found.")
+            continue
+
+        # Float matrices accept computed effect sizes and p-values without dtype warnings.
+        effect_size_matrix = pd.DataFrame(
+            0.0, index=unique_conditions, columns=unique_conditions, dtype=float
+        )
+        p_value_matrix = pd.DataFrame(
+            1.0, index=unique_conditions, columns=unique_conditions, dtype=float
+        )
+        bonferroni_matrix = pd.DataFrame(
+            1.0, index=unique_conditions, columns=unique_conditions, dtype=float
+        )
+
+        valid_counts = {
+            condition: len(_finite_numeric_array(filtered_df.loc[filtered_df[Conditions] == condition, var]))
+            for condition in unique_conditions
+        }
+        missing_conditions = [condition for condition, count in valid_counts.items() if count < 2]
+        if missing_conditions:
+            print(
+                f"{var}: fewer than two valid observations for "
+                + ", ".join(map(str, missing_conditions))
+                + "; affected comparisons are marked N/A."
+            )
 
         for cond1, cond2 in itertools.combinations(unique_conditions, 2):
-            group1 = filtered_df[filtered_df[Conditions] == cond1][var]
-            group2 = filtered_df[filtered_df[Conditions] == cond2][var]
-
+            group1 = filtered_df.loc[filtered_df[Conditions] == cond1, var]
+            group2 = filtered_df.loc[filtered_df[Conditions] == cond2, var]
             effect_size = abs(cohen_d(group1, group2))
 
             if method == 't-test':
                 p_value = perform_t_test(filtered_df, cond1, cond2, var)
-            if method == 'randomization test':
-                p_value = perform_randomization_test_parallel(filtered_df, cond1, cond2, var, n_iterations=n_iterations)
+            elif method == 'randomization test':
+                p_value = perform_randomization_test_parallel(
+                    filtered_df, cond1, cond2, var, n_iterations=n_iterations
+                )
+            else:
+                raise ValueError(f"Unsupported statistical method: {method}")
 
-            # Set and mirror effect sizes and p-values
-            effect_size_matrices[var].loc[cond1, cond2] = effect_size_matrices[var].loc[cond2, cond1] = effect_size
-            p_value_matrices[var].loc[cond1, cond2] = p_value_matrices[var].loc[cond2, cond1] = p_value
-            bonferroni_corrected_p_value = min(p_value * num_comparisons, 1.0)
-            bonferroni_matrices[var].loc[cond1, cond2] = bonferroni_matrices[var].loc[cond2, cond1] = bonferroni_corrected_p_value
+            bonferroni_p = (
+                min(p_value * num_comparisons, 1.0)
+                if np.isfinite(p_value) and num_comparisons > 0
+                else np.nan
+            )
 
-        # Save to CSV
+            effect_size_matrix.loc[cond1, cond2] = effect_size
+            effect_size_matrix.loc[cond2, cond1] = effect_size
+            p_value_matrix.loc[cond1, cond2] = p_value
+            p_value_matrix.loc[cond2, cond1] = p_value
+            bonferroni_matrix.loc[cond1, cond2] = bonferroni_p
+            bonferroni_matrix.loc[cond2, cond1] = bonferroni_p
+
         combined_df = pd.concat([
-            effect_size_matrices[var].rename(columns=lambda x: f"{x} (Effect Size)"),
-            p_value_matrices[var].rename(columns=lambda x: f"{x} ({method} P-Value)"),
-            bonferroni_matrices[var].rename(columns=lambda x: f"{x} ({method} Bonferroni-corrected P-Value)")
+            effect_size_matrix.rename(columns=lambda x: f"{x} (Effect Size)"),
+            p_value_matrix.rename(columns=lambda x: f"{x} ({method} P-Value)"),
+            bonferroni_matrix.rename(
+                columns=lambda x: f"{x} ({method} Bonferroni-corrected P-Value)"
+            ),
         ], axis=1)
-
         combined_df.to_csv(f"{Results_Folder}/csv/{var}_statistics_combined.csv")
 
-        # Create a new figure
         fig = plt.figure(figsize=(16, 10))
         gs = GridSpec(2, 3, height_ratios=[1.5, 1])
         ax_box = fig.add_subplot(gs[0, :])
 
-        # Extract the data for this variable
-        data_for_var = df[[Conditions, var, 'Repeat', 'File_name' ]]
-        # Save the data_for_var to a CSV for replotting
-        data_for_var.to_csv(f"{Results_Folder}/csv/{var}_boxplot_data.csv", index=False)
+        data_for_var = filtered_df[[Conditions, var, 'Repeat', 'File_name']].copy()
+        data_for_var.to_csv(
+            f"{Results_Folder}/csv/{var}_boxplot_data.csv", index=False
+        )
 
-        # Calculate the Interquartile Range (IQR) using the 25th and 75th percentiles
-        Q1 = df[var].quantile(0.2)
-        Q3 = df[var].quantile(0.8)
-        IQR = Q3 - Q1
+        plot_df = filtered_df[[Conditions, var, 'Repeat']].copy()
+        plot_df[var] = pd.to_numeric(plot_df[var], errors='coerce')
+        plot_df[var] = plot_df[var].replace([np.inf, -np.inf], np.nan)
+        plot_df = plot_df.dropna(subset=[var])
 
-        # Define bounds for the outliers
-        multiplier = 10
-        lower_bound = Q1 - multiplier * IQR
-        upper_bound = Q3 + multiplier * IQR
+        if plot_df.empty:
+            plt.close(fig)
+            print(f"Skipping '{var}': no finite values are available.")
+            continue
 
-        # Plotting
-        sns.boxplot(x=Conditions, y=var, data=filtered_df, ax=ax_box, color='lightgray')  # Boxplot
+        # Seaborn 0.13.2 still passes Matplotlib's deprecated ``vert``
+        # argument internally. Suppress only that dependency-level warning.
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                'ignore',
+                message=r'vert: bool will be deprecated.*',
+                category=PendingDeprecationWarning,
+            )
+            sns.boxplot(
+                x=Conditions, y=var, data=plot_df, order=unique_conditions,
+                ax=ax_box, color='lightgray'
+            )
         sns.stripplot(
             x=Conditions,
             y=var,
-            data=filtered_df,
+            data=plot_df,
+            order=unique_conditions,
             ax=ax_box,
             hue='Repeat',
             dodge=True,
             jitter=True,
             alpha=0.2,
-            # Use a discrete palette so repeats are easy to tell apart
-            palette='tab10'
-        )  # Individual data points
-        ax_box.set_ylim([max(min(filtered_df[var]), lower_bound), min(max(filtered_df[var]), upper_bound)])
-        ax_box.set_title(f"{var}")
+            palette='tab10',
+        )
+
+        finite_values = plot_df[var]
+        q1 = finite_values.quantile(0.2)
+        q3 = finite_values.quantile(0.8)
+        iqr = q3 - q1
+        lower_bound = max(finite_values.min(), q1 - 10 * iqr)
+        upper_bound = min(finite_values.max(), q3 + 10 * iqr)
+        if np.isfinite(lower_bound) and np.isfinite(upper_bound):
+            if np.isclose(lower_bound, upper_bound):
+                padding = max(abs(lower_bound) * 0.05, 0.5)
+                lower_bound -= padding
+                upper_bound += padding
+            ax_box.set_ylim(lower_bound, upper_bound)
+
+        ax_box.set_title(var)
         ax_box.set_xlabel('Condition')
         ax_box.set_ylabel(var)
-        tick_labels = ax_box.get_xticklabels()
-        tick_locations = ax_box.get_xticks()
-        ax_box.xaxis.set_major_locator(FixedLocator(tick_locations))
-        ax_box.set_xticklabels(tick_labels, rotation=90)
-        ax_box.legend(loc='center left', bbox_to_anchor=(1, 0.5), title='Repeat')
+        ax_box.tick_params(axis='x', labelrotation=90)
+        handles, labels = ax_box.get_legend_handles_labels()
+        if handles:
+            ax_box.legend(loc='center left', bbox_to_anchor=(1, 0.5), title='Repeat')
 
-        # Statistical Analyses and Heatmaps
-
-        # Effect Size heatmap
         ax_d = fig.add_subplot(gs[1, 0])
-        ax_d.set_xticklabels(ax_d.get_xticklabels(), rotation=90)
-        sns.heatmap(effect_size_matrices[var].fillna(0), annot=True, cmap="viridis", cbar=True, square=True, ax=ax_d, vmax=1)
-        ax_d.set_title(f"Effect Size (Cohen's d)")
+        effect_annotations = effect_size_matrix.map(
+            lambda value: f"{value:.3g}" if np.isfinite(value) else ""
+        )
+        effect_missing = ~np.isfinite(effect_size_matrix.to_numpy())
+        sns.heatmap(
+            effect_size_matrix.fillna(0.0),
+            annot=effect_annotations,
+            fmt="",
+            cmap="viridis",
+            cbar=True,
+            square=True,
+            ax=ax_d,
+            vmin=0,
+            vmax=max(1.0, float(np.nanmax(effect_size_matrix.to_numpy()))),
+        )
+        for row, col in zip(*np.where(effect_missing)):
+            ax_d.add_patch(
+                plt.Rectangle(
+                    (col, row), 1, 1,
+                    facecolor='lightgrey', edgecolor='white', linewidth=0.5, zorder=2
+                )
+            )
+            ax_d.text(col + 0.5, row + 0.5, "N/A", ha='center', va='center', zorder=3)
+        ax_d.set_title("Effect Size (Cohen's d)")
+        ax_d.tick_params(axis='x', labelrotation=90)
+        ax_d.tick_params(axis='y', labelrotation=0)
 
-        # p-value heatmap using the new function
         ax_p = fig.add_subplot(gs[1, 1])
-        plot_heatmap(ax_p, p_value_matrices[var], f"{method} p-value")
+        plot_heatmap(ax_p, p_value_matrix, f"{method} p-value")
 
-        # Bonferroni corrected p-value heatmap using the new function
         ax_bonf = fig.add_subplot(gs[1, 2])
-        plot_heatmap(ax_bonf, bonferroni_matrices[var], "Bonferroni-corrected p-value")
+        plot_heatmap(ax_bonf, bonferroni_matrix, "Bonferroni-corrected p-value")
 
-        plt.tight_layout()
-        pdf_pages = PdfPages(f"{Results_Folder}/pdf/{var}_Boxplots_and_Statistics.pdf")
-        pdf_pages.savefig(fig)  
-        pdf_pages.close()
-        plt.show()   
-        
+        fig.tight_layout()
+        output_path = f"{Results_Folder}/pdf/{var}_Boxplots_and_Statistics.pdf"
+        fig.savefig(output_path, format='pdf', bbox_inches='tight')
+        plt.show()
+        plt.close(fig)
+
+    print("Plotting completed.")
+
 def count_tracks_by_condition_and_repeat(df, Results_Folder, condition_col='Condition', repeat_col='Repeat', track_id_col='Unique_ID'):
     """
     Counts the number of unique tracks for each combination of condition and repeat in the given DataFrame and
@@ -484,100 +642,203 @@ def count_tracks_by_condition_and_repeat(df, Results_Folder, condition_col='Cond
     return track_counts_df        
 
 
+
 def handle_nans_in_selected_columns(selected_df, selected_columns, df_name='DataFrame', nan_threshold=30):
-    """
-    Handles NaN values in the selected columns of the DataFrame.
-    If a column contains more NaN values than the defined threshold, the column is dropped.
-    After column removal, any remaining rows with NaN values across the DataFrame are dropped.
+    """Drop high-missingness columns, then complete-case rows, and return the result."""
+    selected_df = selected_df.copy()
+    selected_columns = [column for column in selected_columns if column in selected_df.columns]
 
-    Args:
-    selected_df (pd.DataFrame): The DataFrame to handle.
-    selected_columns (list): List of columns to check for NaN values.
-    df_name (str): The name of the DataFrame for reporting purposes.
-    nan_threshold (float): Threshold percentage for NaN values to drop the column. Default is 60%.
-    
-    Returns:
-    pd.DataFrame: The updated DataFrame with NaN values handled.
-    """
-   
-    # First pass: handle columns with too many NaN values
-    for column in selected_columns:
-        if selected_df[column].isna().any():
-            nan_percentage = selected_df[column].isna().mean() * 100
-            print(f"Warning: NaN values found in {df_name}.")
-            print(f"{column}: {nan_percentage:.2f}% NaN")
+    nan_percentages = selected_df[selected_columns].isna().mean().mul(100)
+    columns_with_nans = nan_percentages[nan_percentages > 0]
 
-            if nan_percentage > nan_threshold:
-                # If NaN percentage exceeds the threshold, drop the column
-                print(f"Column '{column}' contains more than {nan_threshold}% NaN values. Dropping the column.")
-                selected_df = selected_df.drop(columns=[column])
+    if not columns_with_nans.empty:
+        print(f"Missing values found in {df_name}:")
+        for column, percentage in columns_with_nans.items():
+            print(f"  {column}: {percentage:.2f}% NaN")
 
-    print(f"Proceeding to drop any remaining rows with NaN values in {df_name}.")
-    
-    print(f"Rows before drop: {len(selected_df)}")
-    selected_df = selected_df.dropna()
-    print(f"Rows after drop: {len(selected_df)}") 
+    columns_to_drop = nan_percentages[nan_percentages > nan_threshold].index.tolist()
+    if columns_to_drop:
+        print(
+            f"Dropping columns with more than {nan_threshold}% NaN: "
+            + ", ".join(columns_to_drop)
+        )
+        selected_df = selected_df.drop(columns=columns_to_drop)
 
+    remaining_columns = [
+        column for column in selected_columns if column in selected_df.columns
+    ]
+    rows_before = len(selected_df)
+    selected_df = selected_df.dropna(subset=remaining_columns)
+    rows_after = len(selected_df)
+
+    print(f"Rows before NaN filtering: {rows_before}")
+    print(f"Rows after NaN filtering: {rows_after}")
     return selected_df
 
 
-def heatmap_comparison(df, Results_Folder, Conditions, normalization='zscore', variables_per_page=40):
-    # Get all the selectable columns
-    variables_to_plot = get_selectable_columns(df)
+def _normalize_series_preserving_missing(series, normalization):
+    """Normalize finite values while retaining missing observations as NaN."""
+    numeric = pd.to_numeric(series, errors='coerce').astype(float)
+    numeric = numeric.replace([np.inf, -np.inf], np.nan)
 
-    # Work on a copy of the DataFrame to avoid SettingWithCopyWarning
-    df_mod = df.copy()
-    
-    # Drop rows where all elements are NaNs in the variables_to_plot columns
-
-    handle_nans_in_selected_columns(df_mod, variables_to_plot, 'df_mod', nan_threshold=30)
-
-    #df_mod = df_mod.dropna(subset=variables_to_plot)
-
-    # Normalize the entire dataset for each variable
     if normalization == 'zscore':
-        df_mod.loc[:, variables_to_plot] = df_mod[variables_to_plot].apply(zscore)
-    elif normalization == 'minmax':
-        scaler = MinMaxScaler(feature_range=(-1, 1))
-        df_mod.loc[:, variables_to_plot] = df_mod[variables_to_plot].apply(lambda x: scaler.fit_transform(x.values.reshape(-1, 1)).flatten())
-    else:
-        raise ValueError("Unsupported normalization type. Use 'zscore' or 'minmax'.")
+        mean = numeric.mean(skipna=True)
+        std = numeric.std(skipna=True, ddof=0)
+        if not np.isfinite(mean):
+            return pd.Series(np.nan, index=numeric.index, dtype=float)
+        if not np.isfinite(std) or np.isclose(std, 0.0):
+            return pd.Series(
+                np.where(numeric.notna(), 0.0, np.nan),
+                index=numeric.index,
+                dtype=float,
+            )
+        return (numeric - mean) / std
 
-    # Compute median for each variable across Conditions
-    median_values = df_mod.groupby(Conditions)[variables_to_plot].median().transpose()
+    if normalization == 'minmax':
+        minimum = numeric.min(skipna=True)
+        maximum = numeric.max(skipna=True)
+        value_range = maximum - minimum
+        if not np.isfinite(minimum) or not np.isfinite(maximum):
+            return pd.Series(np.nan, index=numeric.index, dtype=float)
+        if np.isclose(value_range, 0.0):
+            return pd.Series(
+                np.where(numeric.notna(), 0.0, np.nan),
+                index=numeric.index,
+                dtype=float,
+            )
+        return 2.0 * (numeric - minimum) / value_range - 1.0
 
-    # Number of pages
-    total_variables = len(variables_to_plot)
+    raise ValueError("Unsupported normalization type. Use 'zscore' or 'minmax'.")
+
+
+def heatmap_comparison(df, Results_Folder, Conditions, normalization='zscore', variables_per_page=40):
+    """Plot condition medians after NaN-safe per-variable normalization."""
+    variables_to_plot = get_selectable_columns(df)
+    if not variables_to_plot:
+        print("No numeric variables are available for the heatmap.")
+        return pd.DataFrame()
+
+    if Conditions not in df.columns:
+        raise KeyError(f"Condition column '{Conditions}' was not found in the DataFrame.")
+
+    working = pd.DataFrame(index=df.index)
+    working[Conditions] = df[Conditions]
+
+    numeric_values = pd.DataFrame(index=df.index)
+    for variable in variables_to_plot:
+        numeric_values[variable] = pd.to_numeric(df[variable], errors='coerce').replace(
+            [np.inf, -np.inf], np.nan
+        )
+        working[variable] = _normalize_series_preserving_missing(
+            numeric_values[variable], normalization
+        )
+
+    missing_percentages = numeric_values.isna().mean().mul(100)
+    missing_percentages = missing_percentages[missing_percentages > 0]
+    if not missing_percentages.empty:
+        print(
+            "Missing values are retained per metric; "
+            "available values are still used for each condition median."
+        )
+        for variable, percentage in missing_percentages.items():
+            print(f"  {variable}: {percentage:.2f}% missing")
+
+    working = working.dropna(subset=[Conditions])
+    median_values = (
+        working.groupby(Conditions, sort=False)[variables_to_plot]
+        .median()
+        .transpose()
+    )
+    valid_counts = (
+        numeric_values.assign(**{Conditions: df[Conditions]})
+        .dropna(subset=[Conditions])
+        .groupby(Conditions, sort=False)[variables_to_plot]
+        .count()
+        .transpose()
+    )
+
+    unavailable_variables = median_values.index[median_values.isna().all(axis=1)].tolist()
+    if unavailable_variables:
+        print(
+            "No finite values were available for these variables, so they were omitted: "
+            + ", ".join(unavailable_variables)
+        )
+        median_values = median_values.drop(index=unavailable_variables)
+        valid_counts = valid_counts.drop(index=unavailable_variables, errors='ignore')
+
+    if median_values.empty:
+        print("No finite values are available to plot after normalization.")
+        return median_values
+
+    os.makedirs(Results_Folder, exist_ok=True)
+    csv_path = f"{Results_Folder}/Normalized_Median_Values_by_Condition.csv"
+    counts_path = f"{Results_Folder}/Normalized_Median_Valid_Counts_by_Condition.csv"
+    pdf_path = f"{Results_Folder}/Heatmaps_Normalized_Median_Values_by_Condition.pdf"
+
+    median_values.to_csv(csv_path)
+    valid_counts.to_csv(counts_path)
+
+    total_variables = len(median_values)
     num_pages = int(np.ceil(total_variables / variables_per_page))
+    finite_medians = median_values.to_numpy(dtype=float)
+    finite_medians = finite_medians[np.isfinite(finite_medians)]
+    max_abs = float(np.max(np.abs(finite_medians))) if finite_medians.size else 1.0
+    if np.isclose(max_abs, 0.0):
+        max_abs = 1.0
 
-    # Initialize an empty DataFrame to store all pages' data
-    all_pages_data = pd.DataFrame()
-
-    # Create a PDF file to save the heatmaps
-    with PdfPages(f"{Results_Folder}/Heatmaps_Normalized_Median_Values_by_Condition.pdf") as pdf:
+    with PdfPages(pdf_path) as pdf:
         for page in range(num_pages):
             start = page * variables_per_page
             end = min(start + variables_per_page, total_variables)
             page_data = median_values.iloc[start:end]
+            missing_mask = page_data.isna().to_numpy()
+            annotations = page_data.map(
+                lambda value: f"{value:.2f}" if np.isfinite(value) else ""
+            )
 
-            # Append this page's data to the all_pages_data DataFrame
-            all_pages_data = pd.concat([all_pages_data, page_data])
+            fig_width = max(12, 1.4 * len(page_data.columns) + 5)
+            fig_height = max(8, 0.38 * len(page_data.index) + 3)
+            fig, ax = plt.subplots(figsize=(fig_width, fig_height))
+            sns.heatmap(
+                page_data.fillna(0.0),
+                cmap='coolwarm',
+                annot=annotations,
+                fmt="",
+                linewidths=0.1,
+                center=0,
+                vmin=-max_abs,
+                vmax=max_abs,
+                ax=ax,
+                cbar_kws={'label': f'{normalization} normalized median'},
+            )
 
-            plt.figure(figsize=(16, 10))
-            sns.heatmap(page_data, cmap='coolwarm', annot=True, linewidths=.1)
-            plt.title(f"{normalization.capitalize()} Normalized Median Values of Variables by Condition (Page {page + 1})")
-            plt.tight_layout()
+            for row, col in zip(*np.where(missing_mask)):
+                ax.add_patch(
+                    plt.Rectangle(
+                        (col, row), 1, 1,
+                        facecolor='lightgrey',
+                        edgecolor='white',
+                        linewidth=0.5,
+                        zorder=2,
+                    )
+                )
+                ax.text(col + 0.5, row + 0.5, "N/A", ha='center', va='center', zorder=3)
 
-            pdf.savefig()  # saves the current figure into a pdf page
+            ax.set_title(
+                f"{normalization.capitalize()} Normalized Median Values of Variables "
+                f"by Condition (Page {page + 1})"
+            )
+            ax.tick_params(axis='x', labelrotation=90)
+            ax.tick_params(axis='y', labelrotation=0)
+            fig.tight_layout()
+            pdf.savefig(fig, bbox_inches='tight')
             plt.show()
-            plt.close()
+            plt.close(fig)
 
-    # Save all pages data to a single CSV file
-    all_pages_data.to_csv(f"{Results_Folder}/Normalized_Median_Values_by_Condition.csv")
-
-    print(f"Heatmaps saved to {Results_Folder}/Heatmaps_Normalized_Median_Values_by_Condition.pdf")
-    print(f"All data saved to {Results_Folder}/Normalized_Median_Values_by_Condition.csv")
-
+    print(f"Heatmaps saved to {pdf_path}")
+    print(f"Normalized medians saved to {csv_path}")
+    print(f"Valid observation counts saved to {counts_path}")
+    return median_values
 
 def balance_dataset(df, condition_col='Condition', repeat_col='Repeat', track_id_col='Unique_ID', random_seed=None):
     """

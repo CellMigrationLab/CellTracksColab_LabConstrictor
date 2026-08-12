@@ -493,7 +493,7 @@ class TrackingData:
 
     def __load_csv__(self):
         # Load Tracking data in memory
-        file_pattern = f'.*\.{self.file_format}$'
+        file_pattern = rf'.*\.{re.escape(self.file_format)}$'
         merged_spots_df = load_and_populate(self.Folder_path, file_pattern, skiprows=self.skiprows,
                                             usecols=self.usecols, check_calibration=False)
         print(f"Tracking data loaded in memory.")
@@ -581,7 +581,7 @@ class TrackingData:
     def __load_trackmate_csv__(self):
         # Trackmate is composed of tracks and spots
         # Load the tracking info data in memory
-        file_pattern = f'.*tracks.*\.{self.file_format}$'
+        file_pattern = rf'.*tracks.*\.{re.escape(self.file_format)}$'
         merged_tracks_df = load_and_populate(self.Folder_path, file_pattern, skiprows=self.skiprows,
                                              usecols=self.usecols, check_calibration=True)
         print(f"Tracking data loaded in memory.")
@@ -597,7 +597,7 @@ class TrackingData:
                                          desc="Saving Tracks")
 
         # Load the spots data info in memory
-        file_pattern = f'.*spots.*\.{self.file_format}$'
+        file_pattern = rf'.*spots.*\.{re.escape(self.file_format)}$'
         merged_spots_df = load_and_populate(self.Folder_path, file_pattern, skiprows=self.skiprows,
                                             usecols=self.usecols)
 
