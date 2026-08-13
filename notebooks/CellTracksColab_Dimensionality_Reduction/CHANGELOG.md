@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [1.1.4] - 2026-08-13
+
+### Changed
+- Version updated from 1.1.3 to 1.1.4
+
+**Commit Details:**
+- Hash: [`3b884aef`](https://github.com/CellMigrationLab/CellTracksColab_LabConstrictor/commit/3b884aefdb29a95ec13c53680b630c49812b93d8)
+- Author: Iván Hidalgo
+- Date: 2026-08-13 14:11:03 +0300
+- Message: Update notebooks path widget
+
+---
 ## [1.1.3] - 2026-08-13
 
 ### Changed
