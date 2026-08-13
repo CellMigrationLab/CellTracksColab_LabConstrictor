@@ -61,3 +61,7 @@ People have already used LabConstrictor to package their tools in apps. Check ou
 If you use LabConstrictor in your research, please cite the project to support its development:
 
 Iván Hidalgo-Cenalmor, Marcela Xiomara Rivera Pineda, Bruno M. Saraiva, Ricardo Henriques, and Guillaume Jacquemet. **Packaging Jupyter notebooks as installable desktop apps using LabConstrictor. arXiv preprint 2026** DOI: https://doi.org/10.48550/arXiv.2603.10704
+
+## GitHub management
+
+- [Configure automatic template synchronization](template_synchronization.md)

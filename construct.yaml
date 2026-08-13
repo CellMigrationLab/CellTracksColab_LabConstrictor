@@ -19,6 +19,7 @@ extra_files:
 - app/menuinst/notebook_launcher.json: CellTracksColab/notebook_launcher.json
 - app/python_scripts/hide_code_cells.py: CellTracksColab/hide_code_cells.py
 - app/python_scripts/include_path.py: CellTracksColab/include_path.py
+- app/python_scripts/launch_jupyter.py: CellTracksColab/launch_jupyter.py
 - construct.yaml: CellTracksColab/construct.yaml
 - notebooks/CellTracksColab_Custom/CellTracksColab_Custom.ipynb: CellTracksColab/notebooks/CellTracksColab_Custom/CellTracksColab_Custom.ipynb
 - notebooks/CellTracksColab_Dimensionality_Reduction/CellTracksColab_Dimensionality_Reduction.ipynb: CellTracksColab/notebooks/CellTracksColab_Dimensionality_Reduction/CellTracksColab_Dimensionality_Reduction.ipynb
