@@ -40,7 +40,6 @@ extra_files:
 - src/celltracks/Track_Plots.py: CellTracksColab/src/celltracks/Track_Plots.py
 - src/celltracks/__init__.py: CellTracksColab/src/celltracks/__init__.py
 - src/celltracks/data_loader.py: CellTracksColab/src/celltracks/data_loader.py
-- src/celltracks/macos_native_dialog.py: CellTracksColab/src/celltracks/macos_native_dialog.py
 - src/celltracks/xml_loader.py: CellTracksColab/src/celltracks/xml_loader.py
 post_install: app/bash_bat_scripts/post_install.bat # [win]
 post_install: app/bash_bat_scripts/post_install.sh # [unix]
