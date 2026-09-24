@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [1.1.8] - 2026-09-15
+
+### Changed
+- Version updated from 1.1.6 to 1.1.8
+
+**Commit Details:**
+- Hash: [`af9a4070`](https://github.com/CellMigrationLab/CellTracksColab_LabConstrictor/commit/af9a407039885d8a8891a2ef5509f3b8fe0640d8)
+- Author: Iván Hidalgo
+- Date: 2026-09-15 17:06:04 +0300
+- Message: Merge branch 'main' of https://github.com/CellMigrationLab/CellTracksColab_LabConstrictor
+
+---
 ## [1.1.7] - 2026-09-15
 
 ### Changed
