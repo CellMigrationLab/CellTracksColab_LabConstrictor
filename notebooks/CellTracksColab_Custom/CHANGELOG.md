@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [1.1.8] - 2026-09-25
+
+### Changed
+- Version updated from 1.1.7 to 1.1.8
+
+**Commit Details:**
+- Hash: [`22afd41c`](https://github.com/CellMigrationLab/CellTracksColab_LabConstrictor/commit/22afd41ca520c6841b320a02b5a6e2b81441541d)
+- Author: Iván Hidalgo
+- Date: 2026-09-25 15:40:58 +0300
+- Message: Fix the quoted path issue
+
+---
 ## [1.1.7] - 2026-09-24
 
 ### Changed
